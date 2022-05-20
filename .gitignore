@@ -2,3 +2,4 @@
 venv/
 config/
 token/
+__pycache__/
