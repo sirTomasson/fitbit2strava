@@ -2,6 +2,8 @@ import requests as req
 
 from oauth import OAuth
 
+from logging import debug
+
 
 class RESTful:
 
@@ -18,6 +20,7 @@ class RESTful:
         return f"{self.schema}://{self.host}{self.api_prefix}{endpoint}"
 
     def request(self, method: str, endpoint: str, params: dict = None, json: dict = None):
+        debug(f"[{method}] [{self.host} {endpoint}]")
         url = self.to_url(endpoint)
         headers = self.headers
         if self.oauth_client and self.oauth_client.token_exists():

@@ -3,7 +3,7 @@ import json
 import io
 from datetime import datetime, timedelta
 
-from logging import error, info
+from logging import error, info, debug
 
 from rest import RESTful
 
@@ -19,10 +19,12 @@ class Fitbit2Strava:
     def start(self):
         while True:
             self.upload_activities()
-
+            info("sleeping for 5 minutes 💤")
             time.sleep(5 * 60)
 
     def upload_activities(self):
+        info("start upload activities")
+
         strava_client = self.strava_client
         fitbit_client = self.fitbit_client
 
@@ -44,39 +46,50 @@ class Fitbit2Strava:
         activities = json.loads(resp.text)["activities"]
         activities = filter(lambda x: x["activityTypeId"] == OUTDOOR_WORKOUT, activities)
 
-        after_date = datetime.strptime(after_date, "%Y-%m-%d")
-        after_date = round(after_date.timestamp())
-        resp = strava_client.get("/athlete/activities", params={
-            "after": after_date
-        })
+        resp = strava_client.get("/athlete/activities")
 
         if resp.status_code != 200:
             error(f"status:{resp.status_code}, message: {resp.text}")
             return
 
         strava_activities = json.loads(resp.text)
-        external_ids = map(lambda x: x["external_id"], strava_activities)
+        external_ids = list(map(lambda x: x["external_id"], strava_activities))
 
-        activities = filter(lambda x: f"fitbit_push_{x['logId']}" not in external_ids, activities)
+        activities = filter(lambda x: f'fitbit_push_{x["logId"]}.tcx' not in external_ids, activities)
         activities = list(activities)
         info(f"found {len(activities)} new Fitbit activities")
 
         for activity in activities:
-            log_id = activity["logId"]
+            self.upload_activity(activity)
 
-            resp = fitbit_client.get(f"/user/{user_id}/activities/{log_id}.tcx")
-            if resp.status_code != 200:
+    def upload_activity(self, activity):
+        log_id = activity["logId"]
+        user_id = self.fitbit_client.get_token()["user_id"]
+
+        resp = self.fitbit_client.get(f"/user/{user_id}/activities/{log_id}.tcx")
+        if resp.status_code != 200:
+            error(f"status:{resp.status_code}, message: {resp.text}")
+            return
+
+        with io.StringIO(resp.text) as activity_tcx:
+            resp = self.strava_client.upload("/uploads", activity_tcx, params={
+                "name": "Outdoor Workout",
+                "data_type": "tcx",
+                "external_id": f"fitbit_push_{log_id}"
+            })
+            if resp.status_code != 201:
                 error(f"status:{resp.status_code}, message: {resp.text}")
                 return
 
-            with io.StringIO(resp.text) as activity_tcx:
-                resp = strava_client.upload("/uploads", activity_tcx, params={
-                    "name": "Outdoor Workout",
-                    "data_type": "tcx",
-                    "external_id": f"fitbit_push_{log_id}"
-                })
-                if resp.status_code != 201:
-                    error(f"status:{resp.status_code}, message: {resp.text}")
-                    return
+            uploads = json.loads(resp.text)
+            upload_id = uploads["id"]
 
-                info("upload activity successful")
+            debug(f"start upload {upload_id}")
+            resp = self.strava_client.get(f"/uploads/{upload_id}")
+
+            if resp.status_code != 200:
+                error(f"status: {resp.status_code}, message: {resp.text}")
+
+            print(resp.text)
+
+            info("upload activity successful")
